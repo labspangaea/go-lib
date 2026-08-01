@@ -82,6 +82,49 @@ c := &http.Client{
 
 `base` must not be nil — pass `http.DefaultTransport` for standard behaviour.
 
+### `NewResty`
+
+```go
+func NewResty(log *slog.Logger) *resty.Client
+func NewRestyWithClient(hc *http.Client) *resty.Client
+```
+
+For callers who prefer [resty](https://github.com/go-resty/resty)'s fluent request API.
+Built on the client `NewClient` returns, so it inherits the **same** transport stack —
+trace-context propagation, client spans, and the log line below — rather than duplicating
+any of it. The 30 s default timeout applies here too.
+
+```go
+r := client.NewResty(log)
+
+resp, err := r.R().
+    SetContext(ctx).          // required — this is what joins the server span
+    SetResult(&out).
+    Get("https://api.example.com/v1/orders")
+```
+
+> **`SetContext(ctx)` is not optional.** Without it resty issues the request on
+> `context.Background()`, the trace-context headers describe no parent span, and the log
+> line loses its `trace_id` / `span_id`. The call still succeeds — which is exactly what
+> makes the omission easy to miss.
+
+`NewRestyWithClient` wraps an `*http.Client` you have already configured (custom TLS, a
+proxy, a tuned pool). That client must carry an instrumented transport or the resty client
+loses tracing and logging — build it with `NewTransport`.
+
+**Choosing between the two surfaces.** They interoperate; neither is deprecated.
+
+| Use | For |
+|---|---|
+| `NewClient` + the typed helpers below | plain JSON calls — `Get[T]`, `Post[Req,Res]` give you a decoded body and a typed `RequestError` |
+| `NewResty` | retries, multipart, per-request middleware, or when resty's builder is simply more readable |
+
+`*http.Client` already satisfies `Doer`, and `resty.Client.GetClient()` returns the
+underlying `*http.Client`, so you can cross between them at any point.
+
+Resty is pinned to **v2** (`github.com/go-resty/resty/v2`). `resty.dev/v3` is still a
+release candidate; this library will not pin consumers to a pre-release.
+
 ---
 
 ## Log output
