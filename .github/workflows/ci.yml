@@ -17,6 +17,26 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
+    # queue/redis is built on Streams — consumer groups, pending lists,
+    # reclaim. None of that can be observed against a fake, so those tests need
+    # a real broker. Without REDIS_ADDR they skip, and a suite that silently
+    # skips its most important tests is indistinguishable from one that passes
+    # them.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      REDIS_ADDR: localhost:6379
+
     steps:
       - uses: actions/checkout@v4
 
