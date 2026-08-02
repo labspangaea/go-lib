@@ -15,8 +15,8 @@ import (
 	reflect "reflect"
 	time "time"
 
-	gomock "go.uber.org/mock/gomock"
 	storage "github.com/labspangaea/go-lib/storage"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockStorage is a mock of Storage interface.

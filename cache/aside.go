@@ -24,10 +24,10 @@ import (
 // Aside treats a nil result as "nothing to cache" and returns (nil, nil).
 func Aside[V any](
 	ctx context.Context,
-	c   Cache[V],
+	c Cache[V],
 	key string,
 	ttl time.Duration,
-	fn  func(context.Context) (*V, error),
+	fn func(context.Context) (*V, error),
 ) (*V, error) {
 	if v, ok, err := c.Get(ctx, key); err != nil {
 		logger.FromContext(ctx).Warn("cache read failed",

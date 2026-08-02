@@ -60,6 +60,6 @@ type nop[V any] struct{}
 // Use as a safe default in tests or when caching is disabled.
 func Nop[V any]() Cache[V] { return nop[V]{} }
 
-func (nop[V]) Get(_ context.Context, _ string) (v V, _ bool, _ error) { return }
+func (nop[V]) Get(_ context.Context, _ string) (v V, _ bool, _ error)      { return }
 func (nop[V]) Set(_ context.Context, _ string, _ V, _ time.Duration) error { return nil }
 func (nop[V]) Delete(_ context.Context, _ string) error                    { return nil }

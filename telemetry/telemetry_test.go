@@ -3,8 +3,8 @@ package telemetry_test
 import (
 	"testing"
 
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"github.com/labspangaea/go-lib/telemetry"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // These tests verify option wiring without requiring a live OTLP collector.
