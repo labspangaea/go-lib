@@ -14,8 +14,8 @@ import (
 	reflect "reflect"
 	time "time"
 
-	gomock "go.uber.org/mock/gomock"
 	distlock "github.com/labspangaea/go-lib/distlock"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockLock is a mock of Lock interface.

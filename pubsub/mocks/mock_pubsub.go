@@ -13,8 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
 	pubsub "github.com/labspangaea/go-lib/pubsub"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockPublisher is a mock of Publisher interface.

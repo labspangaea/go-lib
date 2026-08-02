@@ -1,0 +1,59 @@
+name: ci
+
+# go-lib is consumed by every scaffolded service, so a regression here reaches
+# further than a regression in any one of them. Until now nothing ran these
+# tests automatically.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # -race because most of this module is concurrent by nature — pub/sub
+      # consumers, the cache decorator, connection pools. A data race here
+      # reproduces as an intermittent failure in a consuming service, which is
+      # far more expensive to chase than a red CI run.
+      - name: Test
+        run: go test ./... -race
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needed on:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # A go.mod that does not match the imports is invisible locally — the
+      # build works off the module cache — and then fails for whoever first
+      # fetches the module clean. Cheapest place to catch it is here.
+      - name: go.mod is tidy
+        run: |
+          go mod tidy
+          if ! git diff --exit-code -- go.mod go.sum; then
+            echo "::error::go.mod/go.sum are not tidy — run 'go mod tidy' and commit the result"
+            exit 1
+          fi
