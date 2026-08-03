@@ -28,7 +28,13 @@ type Model[ID comparable] interface {
 
 // Repository is the full interface satisfied by both BaseRepo and CachedRepo.
 // Services declare narrow subsets of this (OrderReader, OrderWriter) following ISP.
-type Repository[T any, ID comparable] interface {
+//
+// DB is the driver handle type the escape hatch returns — *gorm.DB for BaseRepo
+// here, *bun.DB for the bunrepo flavour. It is a type parameter rather than a
+// concrete type so that CachedRepo, which needs none of the seven methods above
+// to be driver-specific, can decorate either. Naming *gorm.DB here was the only
+// thing that made the cache layer GORM-only.
+type Repository[T any, ID comparable, DB any] interface {
 	FindByID(ctx context.Context, id ID) (*T, error)
 	FindByIDs(ctx context.Context, ids []ID) ([]T, error)
 	Create(ctx context.Context, entity *T) error
@@ -36,7 +42,7 @@ type Repository[T any, ID comparable] interface {
 	Delete(ctx context.Context, id ID) error
 	List(ctx context.Context, p CursorParams, filters ...Filter) ([]T, *CursorPage, error)
 	ListIDs(ctx context.Context, p CursorParams, filters ...Filter) ([]ID, *CursorPage, error)
-	DB(ctx context.Context) *gorm.DB
+	DB(ctx context.Context) DB
 }
 
 // BaseRepo is a generic GORM-backed repository. Embed *BaseRepo[YourModel, YourID]
