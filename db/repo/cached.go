@@ -6,7 +6,6 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"gorm.io/gorm"
 
 	"github.com/labspangaea/go-lib/cache"
 	"github.com/labspangaea/go-lib/logger"
@@ -66,13 +65,18 @@ func WithTwoPhaseList() CachedOption {
 	return func(cfg *cachedConfig) { cfg.twoPhaseList = true }
 }
 
-// CachedRepo wraps any Repository[T, ID] and adds a per-entity cache layer.
+// CachedRepo wraps any Repository[T, ID, DB] and adds a per-entity cache layer.
 // The cache key format is "<keyPrefix>:<id>".
 //
 // Per-entity methods (FindByID, FindByIDs, Update, Delete) are always cached/invalidated.
 // List is a pass-through by default; enable two-phase with WithTwoPhaseList().
-type CachedRepo[T Model[ID], ID comparable] struct {
-	repo      Repository[T, ID]
+//
+// Nothing here touches DB: every cached path goes through the seven
+// driver-agnostic methods, and DB is only carried so the decorator still
+// satisfies the same interface as the repository it wraps. That is why a bun
+// repository can be cached as readily as a GORM one.
+type CachedRepo[T Model[ID], ID comparable, DB any] struct {
+	repo      Repository[T, ID, DB]
 	c         cache.Cache[*T]
 	keyPrefix string
 	cfg       cachedConfig
@@ -83,17 +87,17 @@ type CachedRepo[T Model[ID], ID comparable] struct {
 }
 
 // NewCached wraps repo with a cache layer. The cache is keyed by "<keyPrefix>:<id>".
-func NewCached[T Model[ID], ID comparable](
-	repo Repository[T, ID],
+func NewCached[T Model[ID], ID comparable, DB any](
+	repo Repository[T, ID, DB],
 	c cache.Cache[*T],
 	keyPrefix string,
 	opts ...CachedOption,
-) *CachedRepo[T, ID] {
+) *CachedRepo[T, ID, DB] {
 	cfg := defaultCachedConfig()
 	for _, o := range opts {
 		o(&cfg)
 	}
-	cr := &CachedRepo[T, ID]{
+	cr := &CachedRepo[T, ID, DB]{
 		repo:      repo,
 		c:         c,
 		keyPrefix: keyPrefix,
@@ -110,12 +114,12 @@ func NewCached[T Model[ID], ID comparable](
 }
 
 // key builds the cache key for a given ID.
-func (r *CachedRepo[T, ID]) key(id ID) string {
+func (r *CachedRepo[T, ID, DB]) key(id ID) string {
 	return fmt.Sprintf("%s:%v", r.keyPrefix, id)
 }
 
 // keys builds cache keys for a slice of IDs, preserving order.
-func (r *CachedRepo[T, ID]) keys(ids []ID) []string {
+func (r *CachedRepo[T, ID, DB]) keys(ids []ID) []string {
 	out := make([]string, len(ids))
 	for i, id := range ids {
 		out[i] = r.key(id)
@@ -124,7 +128,7 @@ func (r *CachedRepo[T, ID]) keys(ids []ID) []string {
 }
 
 // FindByID returns the cached entity or fetches from DB on miss.
-func (r *CachedRepo[T, ID]) FindByID(ctx context.Context, id ID) (*T, error) {
+func (r *CachedRepo[T, ID, DB]) FindByID(ctx context.Context, id ID) (*T, error) {
 	l := logger.FromContext(ctx)
 	k := r.key(id)
 
@@ -147,7 +151,7 @@ func (r *CachedRepo[T, ID]) FindByID(ctx context.Context, id ID) (*T, error) {
 
 // FindByIDs batch-fetches entities: MGet from cache, then IN query for misses,
 // then MSet all misses back. Final result is reordered to match the ids slice.
-func (r *CachedRepo[T, ID]) FindByIDs(ctx context.Context, ids []ID) ([]T, error) {
+func (r *CachedRepo[T, ID, DB]) FindByIDs(ctx context.Context, ids []ID) ([]T, error) {
 	if len(ids) == 0 {
 		return []T{}, nil
 	}
@@ -193,12 +197,12 @@ func (r *CachedRepo[T, ID]) FindByIDs(ctx context.Context, ids []ID) ([]T, error
 }
 
 // Create writes to DB. No cache write — the entity was just born and has not been read.
-func (r *CachedRepo[T, ID]) Create(ctx context.Context, entity *T) error {
+func (r *CachedRepo[T, ID, DB]) Create(ctx context.Context, entity *T) error {
 	return r.repo.Create(ctx, entity)
 }
 
 // Update writes to DB then invalidates the cache entry.
-func (r *CachedRepo[T, ID]) Update(ctx context.Context, entity *T, columns []string) error {
+func (r *CachedRepo[T, ID, DB]) Update(ctx context.Context, entity *T, columns []string) error {
 	if err := r.repo.Update(ctx, entity, columns); err != nil {
 		return err
 	}
@@ -211,7 +215,7 @@ func (r *CachedRepo[T, ID]) Update(ctx context.Context, entity *T, columns []str
 }
 
 // Delete removes from DB then invalidates the cache entry.
-func (r *CachedRepo[T, ID]) Delete(ctx context.Context, id ID) error {
+func (r *CachedRepo[T, ID, DB]) Delete(ctx context.Context, id ID) error {
 	if err := r.repo.Delete(ctx, id); err != nil {
 		return err
 	}
@@ -225,7 +229,7 @@ func (r *CachedRepo[T, ID]) Delete(ctx context.Context, id ID) error {
 
 // List is a pass-through to the underlying repo by default (single DB query, no caching).
 // Enable two-phase mode with WithTwoPhaseList() after profiling confirms > ~70% cache hit rate.
-func (r *CachedRepo[T, ID]) List(ctx context.Context, p CursorParams, filters ...Filter) ([]T, *CursorPage, error) {
+func (r *CachedRepo[T, ID, DB]) List(ctx context.Context, p CursorParams, filters ...Filter) ([]T, *CursorPage, error) {
 	if !r.cfg.twoPhaseList {
 		return r.repo.List(ctx, p, filters...)
 	}
@@ -234,7 +238,7 @@ func (r *CachedRepo[T, ID]) List(ctx context.Context, p CursorParams, filters ..
 
 // listTwoPhase implements the opt-in two-phase list:
 // Phase 1 ListIDs (covering index) → Phase 2 MGet cache → Phase 3 IN fetch misses + MSet → Phase 4 reorder.
-func (r *CachedRepo[T, ID]) listTwoPhase(ctx context.Context, p CursorParams, filters []Filter) ([]T, *CursorPage, error) {
+func (r *CachedRepo[T, ID, DB]) listTwoPhase(ctx context.Context, p CursorParams, filters []Filter) ([]T, *CursorPage, error) {
 	l := logger.FromContext(ctx)
 
 	// Phase 1: get ordered ID list from DB (covering index scan).
@@ -288,18 +292,18 @@ func (r *CachedRepo[T, ID]) listTwoPhase(ctx context.Context, p CursorParams, fi
 }
 
 // ListIDs delegates to the underlying repo — CachedRepo does not cache ID lists.
-func (r *CachedRepo[T, ID]) ListIDs(ctx context.Context, p CursorParams, filters ...Filter) ([]ID, *CursorPage, error) {
+func (r *CachedRepo[T, ID, DB]) ListIDs(ctx context.Context, p CursorParams, filters ...Filter) ([]ID, *CursorPage, error) {
 	return r.repo.ListIDs(ctx, p, filters...)
 }
 
 // DB passes through to the underlying repo's DB escape hatch.
-func (r *CachedRepo[T, ID]) DB(ctx context.Context) *gorm.DB {
+func (r *CachedRepo[T, ID, DB]) DB(ctx context.Context) DB {
 	return r.repo.DB(ctx)
 }
 
 // mget fetches all ids from cache in one round trip when BatchGetter is available,
 // or falls back to sequential Gets. Returns hits as []*T and miss IDs.
-func (r *CachedRepo[T, ID]) mget(ctx context.Context, ids []ID, keys []string) (hits []*T, missIDs []ID, err error) {
+func (r *CachedRepo[T, ID, DB]) mget(ctx context.Context, ids []ID, keys []string) (hits []*T, missIDs []ID, err error) {
 	if r.batchGet != nil {
 		hitMap, batchErr := r.batchGet.MGet(ctx, keys)
 		if batchErr != nil {
@@ -332,7 +336,7 @@ func (r *CachedRepo[T, ID]) mget(ctx context.Context, ids []ID, keys []string) (
 
 // mset writes rows back to cache in one pipeline round trip when BatchSetter is available,
 // or falls back to sequential Sets.
-func (r *CachedRepo[T, ID]) mset(ctx context.Context, rows []T) error {
+func (r *CachedRepo[T, ID, DB]) mset(ctx context.Context, rows []T) error {
 	if len(rows) == 0 {
 		return nil
 	}
